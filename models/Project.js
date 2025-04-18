@@ -1,21 +1,24 @@
 const mongoose = require("mongoose");
 
 const projectSchema = new mongoose.Schema({
-  day: Number,
-  liveLink: String,
-  repoLink: String,
-  description: String,
-  image: String,
-  frameworks: [String],
-  languages: [String],
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
+    required: true,
   },
-  dateSubmitted: {
-    type: Date,
-    default: Date.now,
+  day: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 30,
   },
+  status: {
+    type: String,
+    enum: ["draft", "submitted", "approved"],
+    default: "draft",
+  },
+  submissionDate: Date,
+  // ... other project fields ...
 });
 
 module.exports = mongoose.model("Project", projectSchema);

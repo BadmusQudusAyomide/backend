@@ -1,64 +1,87 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { signup, login } = require("../controllers/authController");
+const { protect, isAdmin } = require("../middleware/authMiddleware");
+const User = require("../models/User");
+const Project = require("../models/Project"); // Assuming you have a Project model
 
-// Register Route
-// Register Route
-router.post('/register', async (req, res) => {
+// Authentication routes
+router.post("/signup", signup);
+router.post("/login", login);
+
+// Protected user profile route
+router.get("/me", protect, async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
-    
-    // Check if the user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ msg: 'User already exists' });
+    // Get user document without password
+    const user = await User.findById(req.user.id).select("-password").lean();
 
-    // Hash the password before storing it
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Create a new user
-    const newUser = new User({ fullName, email, password: hashedPassword });
-    await newUser.save();
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
-    res.status(201).json({ msg: 'User registered successfully' });
+    // Calculate challenge statistics
+    const stats = await calculateUserStats(req.user.id);
+
+    res.json({
+      user,
+      stats,
+    });
   } catch (err) {
-    res.status(500).json({ msg: 'Server error' });
+    console.error("Error in /me endpoint:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
+// Admin-only route
+router.get("/admin-only", protect, isAdmin, (req, res) => {
+  res.json({
+    message: "You are an admin!",
+    user: req.user,
+  });
+});
 
-// Login Route
-// Login Route
-// Login Route
-router.post("/login", async (req, res) => {
+// Helper function to calculate user statistics
+async function calculateUserStats(userId) {
   try {
-    const { email, password } = req.body;
-
-    // Find the user by email
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: "User not found" });
-    }
-
-    // Check if the password matches
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: "Invalid credentials" });
-    }
-
-    // Create JWT token
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
+    // Count user's submitted projects
+    const projectsSubmitted = await Project.countDocuments({
+      user: userId,
+      status: "submitted",
     });
 
-    // Respond with token and user info
-    res.status(200).json({ msg: "Login successful", token });
-  } catch (err) {
-    console.error(err); // Log error for debugging
-    res.status(500).json({ msg: "Server error", error: err.message });
-  }
-});
+    // Calculate current day of challenge (1-30)
+    const user = await User.findById(userId).select("challengeStartDate");
+    const startDate = user.challengeStartDate || new Date();
+    const currentDay = Math.min(
+      30,
+      Math.floor((Date.now() - startDate) / (1000 * 60 * 60 * 24)) + 1
+    );
 
+    // Calculate user's rank based on submitted projects
+    const totalParticipants = await User.countDocuments();
+    const usersWithMoreProjects = await User.countDocuments({
+      "stats.projectsSubmitted": { $gt: projectsSubmitted },
+    });
+    const rank =
+      projectsSubmitted > 0 ? usersWithMoreProjects + 1 : totalParticipants;
+
+    return {
+      projectsSubmitted,
+      currentDay,
+      totalParticipants,
+      rank,
+      completionPercentage: Math.round((currentDay / 30) * 100),
+    };
+  } catch (err) {
+    console.error("Error calculating user stats:", err);
+    return {
+      projectsSubmitted: 0,
+      currentDay: 1,
+      totalParticipants: 0,
+      rank: 0,
+      completionPercentage: 0,
+    };
+  }
+}
 
 module.exports = router;
