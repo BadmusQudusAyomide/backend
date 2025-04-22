@@ -16,11 +16,27 @@ app.use(
   })
 );
 
-// The rest of your existing setup
+// Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use("/api/auth", require("./routes/auth"));
+app.use("/api/projects", require("./routes/projectRoutes"));
+app.use("/api/uploads", require("./routes/uploadRoutes"));
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    success: false,
+    message: "Server Error",
+    error:
+      process.env.NODE_ENV === "production"
+        ? "Something went wrong"
+        : err.message,
+  });
+});
 
 // DB + Server
 mongoose

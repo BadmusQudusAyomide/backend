@@ -4,10 +4,13 @@ const { signup, login } = require("../controllers/authController");
 const { protect, isAdmin } = require("../middleware/authMiddleware");
 const User = require("../models/User");
 const Project = require("../models/Project"); // Assuming you have a Project model
+const authController = require("../controllers/authController"); 
 
 // Authentication routes
 router.post("/signup", signup);
 router.post("/login", login);
+
+router.put("/profile", protect, authController.updateProfile);
 
 // Protected user profile route
 router.get("/me", protect, async (req, res) => {
@@ -30,6 +33,7 @@ router.get("/me", protect, async (req, res) => {
     console.error("Error in /me endpoint:", err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
+  
 });
 
 // Admin-only route
