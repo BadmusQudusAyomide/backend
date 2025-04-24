@@ -1,39 +1,125 @@
 const express = require("express");
 const router = express.Router();
-const { signup, login } = require("../controllers/authController");
+const passport = require("passport");
+const {
+  signup,
+  login,
+  updateProfile,
+} = require("../controllers/authController");
 const { protect, isAdmin } = require("../middleware/authMiddleware");
 const User = require("../models/User");
-const Project = require("../models/Project"); // Assuming you have a Project model
-const authController = require("../controllers/authController"); 
+const Project = require("../models/Project");
+const jwt = require("jsonwebtoken");
 
-// Authentication routes
+// Utility: Generate JWT
+const generateToken = (user) => {
+  return jwt.sign(
+    {
+      id: user._id,
+      username: user.username,
+      isAdmin: user.isAdmin,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
+  );
+};
+
+// Signup & Login routes
 router.post("/signup", signup);
 router.post("/login", login);
 
-router.put("/profile", protect, authController.updateProfile);
-
-// Protected user profile route
-router.get("/me", protect, async (req, res) => {
+// Admin signup route
+router.post("/admin-signup", async (req, res) => {
   try {
-    // Get user document without password
-    const user = await User.findById(req.user.id).select("-password").lean();
+    const { fullName, username, email, password, adminKey } = req.body;
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    if (adminKey !== process.env.ADMIN_REGISTRATION_KEY) {
+      return res
+        .status(403)
+        .json({ message: "Invalid admin registration key" });
     }
 
-    // Calculate challenge statistics
-    const stats = await calculateUserStats(req.user.id);
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
 
+    if (username) {
+      const usernameExists = await User.findOne({ username });
+      if (usernameExists) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+    }
+
+    const user = await User.create({
+      fullName,
+      username,
+      email,
+      password,
+      isAdmin: true,
+    });
+
+    const token = generateToken(user);
+
+    res.status(201).json({
+      success: true,
+      message: "Admin account created successfully",
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        token,
+      },
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Admin registration failed", error: err.message });
+  }
+});
+
+// Update profile route
+router.put("/profile", protect, updateProfile);
+
+// Protected profile route
+// In your auth routes
+ // In your auth routes
+router.get('/me', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .select('-password')
+      .lean();
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    const stats = await calculateUserStats(req.user.id);
+    
     res.json({
-      user,
-      stats,
+      success: true,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        profileImage: user.profileImage,
+        ...stats
+      }
     });
   } catch (err) {
     console.error("Error in /me endpoint:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to fetch user data",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
-  
 });
 
 // Admin-only route
@@ -44,28 +130,106 @@ router.get("/admin-only", protect, isAdmin, (req, res) => {
   });
 });
 
-// Helper function to calculate user statistics
+// Google OAuth Routes - Fixed Version
+router.get("/google", (req, res, next) => {
+  // Get the original path or default to dashboard
+  const redirectPath = req.query.redirect || "/dashboard";
+
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    session: false,
+    state: JSON.stringify(redirectPath), // Store the original path
+    prompt: "select_account",
+  })(req, res, next);
+});
+
+// In your auth routes file
+// In your auth routes file
+router.get(
+  "/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
+  }),
+  (req, res) => {
+    try {
+      // Get the original redirect path or default to dashboard
+      const redirectPath = req.query.state
+        ? JSON.parse(req.query.state)
+        : "/dashboard";
+
+      if (!req.user?.token) {
+        throw new Error("No token received");
+      }
+
+      // Redirect to frontend success handler
+      res.redirect(
+        `${process.env.FRONTEND_URL}/auth/success?token=${
+          req.user.token
+        }&redirect=${encodeURIComponent(redirectPath)}`
+      );
+    } catch (err) {
+      console.error("Google callback error:", err);
+      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+  }
+);
+
+// User management routes
+router.get("/users", protect, isAdmin, async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+    res.json(users);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+router.get("/users/count", protect, isAdmin, async (req, res) => {
+  try {
+    const count = await User.countDocuments();
+    res.status(200).json({ success: true, count });
+  } catch (err) {
+    console.error("Error counting users:", err);
+    res.status(500).json({ success: false, message: "Error counting users" });
+  }
+});
+
+router.get("/users/active", protect, isAdmin, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const count = await User.countDocuments({ lastActive: { $gte: today } });
+    res.status(200).json({ success: true, count });
+  } catch (err) {
+    console.error("Error counting active users:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error counting active users" });
+  }
+});
+
+// Helper function
 async function calculateUserStats(userId) {
   try {
-    // Count user's submitted projects
     const projectsSubmitted = await Project.countDocuments({
       user: userId,
       status: "submitted",
     });
 
-    // Calculate current day of challenge (1-30)
     const user = await User.findById(userId).select("challengeStartDate");
     const startDate = user.challengeStartDate || new Date();
     const currentDay = Math.min(
       30,
-      Math.floor((Date.now() - startDate) / (1000 * 60 * 60 * 24)) + 1
+      Math.floor((Date.now() - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1
     );
 
-    // Calculate user's rank based on submitted projects
     const totalParticipants = await User.countDocuments();
     const usersWithMoreProjects = await User.countDocuments({
       "stats.projectsSubmitted": { $gt: projectsSubmitted },
     });
+
     const rank =
       projectsSubmitted > 0 ? usersWithMoreProjects + 1 : totalParticipants;
 
@@ -87,5 +251,8 @@ async function calculateUserStats(userId) {
     };
   }
 }
-
+// In your auth routes file
+router.get('/verify-token', protect, (req, res) => {
+  res.json({ isValid: true });
+});
 module.exports = router;

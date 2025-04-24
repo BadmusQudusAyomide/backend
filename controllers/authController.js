@@ -1,12 +1,15 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 
+// In authController.js
 const generateToken = (user) => {
-  return jwt.sign(
-    { id: user._id, username: user.username, isAdmin: user.isAdmin },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const payload = {
+    id: user._id,
+    username: user.username,
+    isAdmin: user.isAdmin
+  };
+  console.log("Token payload:", payload);
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 
 // Signup

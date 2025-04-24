@@ -3,7 +3,15 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    username: { type: String, unique: true, sparse: true },
+    username: { type: String, 
+      unique: true, 
+      // sparse: true, 
+      trim: true,
+    minlength: 3,
+    maxlength: 20,
+    match: /^[a-zA-Z0-9_]+$/
+   },
+      
     fullName: { type: String },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
@@ -15,6 +23,11 @@ const userSchema = new mongoose.Schema(
     website: { type: String },
     profileImage: { type: String },
     theme: { type: String, default: "light" },
+
+    // Activity tracking
+    lastActive: { type: Date, default: Date.now },
+    isActive: { type: Boolean, default: true },
+
     notifications: {
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
@@ -35,6 +48,12 @@ userSchema.pre("save", async function (next) {
 // Compare password method
 userSchema.methods.comparePassword = function (password) {
   return bcrypt.compare(password, this.password);
+};
+
+// Update lastActive timestamp on login
+userSchema.methods.updateLastActive = function () {
+  this.lastActive = new Date();
+  return this.save();
 };
 
 module.exports = mongoose.model("User", userSchema);

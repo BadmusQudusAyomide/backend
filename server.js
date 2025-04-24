@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-
+const challengeRoutes = require("./routes/challengeRoutes");
 const app = express();
 
 // Updated CORS configuration
@@ -20,10 +20,26 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const passport = require("passport");
+require("./config/passport");
+
+app.use(passport.initialize());
+// Add this to your server.js before routes
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    console.log(`Incoming ${req.method} request to ${req.originalUrl}`);
+    console.log("Headers:", req.headers);
+    next();
+  });
+}
+
+
+
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/projects", require("./routes/projectRoutes"));
 app.use("/api/uploads", require("./routes/uploadRoutes"));
+app.use('/api/challenge', challengeRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -49,3 +65,4 @@ mongoose
   .catch((err) => {
     console.error("MongoDB connection error:", err);
   });
+
