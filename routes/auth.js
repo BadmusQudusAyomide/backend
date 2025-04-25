@@ -245,8 +245,8 @@ async function calculateUserStats(userId) {
 router.get('/verify-token', protect, (req, res) => {
   res.json({ isValid: true });
 });
-router.get('/verify-token', protect, (req, res) => {
-  res.json({ 
+router.get("/verify-token", protect, (req, res) => {
+  res.json({
     success: true,
     isAdmin: req.user.isAdmin || false,
     user: req.user
