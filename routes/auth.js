@@ -86,38 +86,28 @@ router.put("/profile", protect, updateProfile);
 // Protected profile route
 // In your auth routes
  // In your auth routes
-router.get('/me', protect, async (req, res) => {
+router.get("/me", protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id)
-      .select('-password')
-      .lean();
-    
+    const user = await User.findById(req.user.id).select("-password").lean();
+
     if (!user) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "User not found" 
+        message: "User not found",
       });
     }
 
-    const stats = await calculateUserStats(req.user.id);
-    
-    res.json({
+    return res.json({
       success: true,
       user: {
-        id: user._id,
-        fullName: user.fullName,
-        username: user.username,
-        email: user.email,
-        profileImage: user.profileImage,
-        ...stats
-      }
+        ...user,
+        isAdmin: user.isAdmin || false, // Ensure isAdmin is always present
+      },
     });
   } catch (err) {
-    console.error("Error in /me endpoint:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: "Failed to fetch user data",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 });
@@ -254,5 +244,12 @@ async function calculateUserStats(userId) {
 // In your auth routes file
 router.get('/verify-token', protect, (req, res) => {
   res.json({ isValid: true });
+});
+router.get('/verify-token', protect, (req, res) => {
+  res.json({ 
+    success: true,
+    isAdmin: req.user.isAdmin || false,
+    user: req.user
+  });
 });
 module.exports = router;

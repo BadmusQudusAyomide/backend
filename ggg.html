@@ -1,70 +1,4 @@
-require("dotenv").config();
-
 const express = require("express");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const challengeRoutes = require("./routes/challengeRoutes");
-const app = express();
-
-// Updated CORS configuration
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000", // Your frontend URL
-    credentials: true, // If you're using cookies/sessions
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allowed methods
-    allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
-  })
-);
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-const passport = require("passport");
-require("./config/passport");
-
-app.use(passport.initialize());
-// Add this to your server.js before routes
-app.use((req, res, next) => {
-  console.log(`Incoming ${req.method} request to ${req.originalUrl}`);
-  console.log('Headers:', req.headers);
-  next();
-});
-
-
-// Routes
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/projects", require("./routes/projectRoutes"));
-app.use("/api/uploads", require("./routes/uploadRoutes"));
-app.use('/api/challenge', challengeRoutes);
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    message: "Server Error",
-    error:
-      process.env.NODE_ENV === "production"
-        ? "Something went wrong"
-        : err.message,
-  });
-});
-
-// DB + Server
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    app.listen(process.env.PORT, () => {
-      console.log(`Server running on port ${process.env.PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-  });
-
-
-  const express = require("express");
 const router = express.Router();
 const passport = require("passport");
 const {
@@ -210,34 +144,35 @@ router.get("/google", (req, res, next) => {
 });
 
 // In your auth routes file
+// In your auth routes file
 router.get(
-"/google/callback",
-passport.authenticate("google", {
-session: false,
-failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
-}),
-(req, res) => {
-try {
-// Get the original redirect path or default to dashboard
-const redirectPath = req.query.state
-? JSON.parse(req.query.state)
-: "/dashboard";
+  "/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
+  }),
+  (req, res) => {
+    try {
+      // Get the original redirect path or default to dashboard
+      const redirectPath = req.query.state
+        ? JSON.parse(req.query.state)
+        : "/dashboard";
 
-if (!req.user?.token) {
-throw new Error("No token received");
-}
+      if (!req.user?.token) {
+        throw new Error("No token received");
+      }
 
-// Redirect to frontend success handler
-res.redirect(
-`${process.env.FRONTEND_URL}/auth/success?token=${
-req.user.token
-}&redirect=${encodeURIComponent(redirectPath)}`
-);
-} catch (err) {
-console.error("Google callback error:", err);
-res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
-}
-}
+      // Redirect to frontend success handler
+      res.redirect(
+        `${process.env.FRONTEND_URL}/auth/success?token=${
+          req.user.token
+        }&redirect=${encodeURIComponent(redirectPath)}`
+      );
+    } catch (err) {
+      console.error("Google callback error:", err);
+      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+  }
 );
 
 // User management routes
@@ -322,73 +257,191 @@ router.get('/verify-token', protect, (req, res) => {
 });
 module.exports = router;
 
+require("dotenv").config();
+
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const challengeRoutes = require("./routes/challengeRoutes");
+const app = express();
+
+// Updated CORS configuration
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000", // Your frontend URL
+    credentials: true, // If you're using cookies/sessions
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allowed methods
+    allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
+  })
+);
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const passport = require("passport");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
+require("./config/passport");
 
-// Helper function to generate random username
-const generateUsername = (email, displayName) => {
-  // Use email prefix or sanitized display name
-  const base =
-    email.split("@")[0] || displayName.toLowerCase().replace(/\s+/g, "");
+app.use(passport.initialize());
+// Add this to your server.js before routes
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    console.log(`Incoming ${req.method} request to ${req.originalUrl}`);
+    console.log("Headers:", req.headers);
+    next();
+  });
+}
 
-  // Add random 4-digit number to ensure uniqueness
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
 
-  return `${base}${randomSuffix}`;
+
+// Routes
+app.use("/api/auth", require("./routes/auth"));
+app.use("/api/projects", require("./routes/projectRoutes"));
+app.use("/api/uploads", require("./routes/uploadRoutes"));
+app.use('/api/challenge', challengeRoutes);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    success: false,
+    message: "Server Error",
+    error:
+      process.env.NODE_ENV === "production"
+        ? "Something went wrong"
+        : err.message,
+  });
+});
+
+// DB + Server
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
+    app.listen(process.env.PORT, () => {
+      console.log(`Server running on port ${process.env.PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("MongoDB connection error:", err);
+  });
+
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+
+const userSchema = new mongoose.Schema(
+  {
+    username: { type: String, 
+      unique: true, 
+      // sparse: true, 
+      trim: true,
+    minlength: 3,
+    maxlength: 20,
+    match: /^[a-zA-Z0-9_]+$/
+   },
+      
+    fullName: { type: String },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    isAdmin: { type: Boolean, default: false },
+
+    // Additional fields for profile
+    bio: { type: String },
+    location: { type: String },
+    website: { type: String },
+    profileImage: { type: String },
+    theme: { type: String, default: "light" },
+
+    // Activity tracking
+    lastActive: { type: Date, default: Date.now },
+    isActive: { type: Boolean, default: true },
+
+    notifications: {
+      email: { type: Boolean, default: true },
+      push: { type: Boolean, default: true },
+      newsletter: { type: Boolean, default: false },
+    },
+  },
+  { timestamps: true }
+);
+
+// Hash password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+// Compare password method
+userSchema.methods.comparePassword = function (password) {
+  return bcrypt.compare(password, this.password);
 };
 
-// In your passport configuration file
-// In your passport Google strategy
-passport.use(new GoogleStrategy({
-  clientID: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL
-}, async (accessToken, refreshToken, profile, done) => {
-  try {
-    const email = profile.emails[0].value;
-    let user = await User.findOne({ email });
+// Update lastActive timestamp on login
+userSchema.methods.updateLastActive = function () {
+  this.lastActive = new Date();
+  return this.save();
+};
 
-    if (!user) {
-      user = await User.create({
-        fullName: profile.displayName,
-        email,
-        profileImage: profile.photos[0]?.value,
-        authMethod: 'google',
-        isVerified: true
-      });
-    }
+module.exports = mongoose.model("User", userSchema);
 
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
-    // Include basic user data in the token response
-    done(null, { 
-      token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email
+// Auth Middleware (for logged-in users)
+// In your authMiddleware.js, add more detailed logging
+const protect = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  console.log("Auth header received:", authHeader);
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    console.log("Extracted token:", token);
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log("Token decoded successfully:", decoded);
+      req.user = await User.findById(decoded.id).select("-password");
+      
+      if (!req.user) {
+        console.log("User not found for ID:", decoded.id);
+        return res.status(401).json({ message: "User not found" });
       }
-    });
-  } catch (err) {
-    done(err, null);
+      
+      next();
+    } catch (err) {
+      console.error("Token verification error:", err);
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+  } else {
+    console.log("No valid auth header found");
+    return res.status(401).json({ message: "No token provided" });
   }
-}));
+};
+
+// Admin Middleware (must be logged in and isAdmin === true)
+const isAdmin = (req, res, next) => {
+  if (req.user && req.user.isAdmin) {
+    next();
+  } else {
+    return res.status(403).json({ message: "Admin access denied" });
+  }
+};
+
+module.exports = { protect, isAdmin };
+
 
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 
+// In authController.js
 const generateToken = (user) => {
-  return jwt.sign(
-    { id: user._id, username: user.username, isAdmin: user.isAdmin },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  const payload = {
+    id: user._id,
+    username: user.username,
+    isAdmin: user.isAdmin
+  };
+  console.log("Token payload:", payload);
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 
 // Signup
@@ -525,95 +578,61 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 
-const userSchema = new mongoose.Schema(
-  {
-    username: { type: String, 
-      unique: true, 
-      // sparse: true, 
-      trim: true,
-    minlength: 3,
-    maxlength: 20,
-    match: /^[a-zA-Z0-9_]+$/
-   },
-      
-    fullName: { type: String },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    isAdmin: { type: Boolean, default: false },
-
-    // Additional fields for profile
-    bio: { type: String },
-    location: { type: String },
-    website: { type: String },
-    profileImage: { type: String },
-    theme: { type: String, default: "light" },
-
-    // Activity tracking
-    lastActive: { type: Date, default: Date.now },
-    isActive: { type: Boolean, default: true },
-
-    notifications: {
-      email: { type: Boolean, default: true },
-      push: { type: Boolean, default: true },
-      newsletter: { type: Boolean, default: false },
-    },
-  },
-  { timestamps: true }
-);
-
-// Hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
-// Compare password method
-userSchema.methods.comparePassword = function (password) {
-  return bcrypt.compare(password, this.password);
-};
-
-// Update lastActive timestamp on login
-userSchema.methods.updateLastActive = function () {
-  this.lastActive = new Date();
-  return this.save();
-};
-
-module.exports = mongoose.model("User", userSchema);
-
-const jwt = require("jsonwebtoken");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const User = require("../models/User");
+const jwt = require("jsonwebtoken");
 
-// Auth Middleware (for logged-in users)
-const protect = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+// Helper function to generate random username
+const generateUsername = (email, displayName) => {
+  // Use email prefix or sanitized display name
+  const base =
+    email.split("@")[0] || displayName.toLowerCase().replace(/\s+/g, "");
 
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).select("-password");
-      next();
-    } catch (err) {
-      return res.status(401).json({ message: "Invalid or expired token" });
+  // Add random 4-digit number to ensure uniqueness
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+
+  return `${base}${randomSuffix}`;
+};
+
+// In your passport configuration file
+// In your passport Google strategy
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: process.env.GOOGLE_CALLBACK_URL
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    const email = profile.emails[0].value;
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = await User.create({
+        fullName: profile.displayName,
+        email,
+        profileImage: profile.photos[0]?.value,
+        authMethod: 'google',
+        isVerified: true
+      });
     }
-  } else {
-    return res.status(401).json({ message: "No token provided" });
+
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Include basic user data in the token response
+    done(null, { 
+      token,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email
+      }
+    });
+  } catch (err) {
+    done(err, null);
   }
-};
-
-// Admin Middleware (must be logged in and isAdmin === true)
-const isAdmin = (req, res, next) => {
-  if (req.user && req.user.isAdmin) {
-    next();
-  } else {
-    return res.status(403).json({ message: "Admin access denied" });
-  }
-};
-
-module.exports = { protect, isAdmin };
-
+}));
