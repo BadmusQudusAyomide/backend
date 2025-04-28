@@ -29,7 +29,13 @@ exports.signup = async (req, res) => {
         return res.status(400).json({ message: "Username already taken" });
       }
     }
-    const user = await User.create({ fullName, email, password, username });
+    const user = await User.create({ 
+      fullName, 
+      email, 
+      password, 
+      username,
+      authMethod: 'local' 
+    });
    
     res.status(201).json({
       user: {

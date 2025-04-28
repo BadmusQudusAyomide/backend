@@ -252,5 +252,41 @@ router.get("/verify-token", protect, (req, res) => {
     user: req.user
   });
 });
+// GitHub OAuth Routes
+router.get('/github', (req, res, next) => {
+  const redirectPath = req.query.redirect || '/dashboard';
+  passport.authenticate('github', {
+    scope: ['user:email'],
+    session: false,
+    state: JSON.stringify(redirectPath)
+  })(req, res, next);
+});
+
+router.get('/github/callback', 
+  passport.authenticate('github', {
+    session: false,
+    failureRedirect: `${process.env.FRONTEND_URL}/login?error=github_auth_failed`
+  }),
+  (req, res) => {
+    try {
+      const redirectPath = req.query.state 
+        ? JSON.parse(req.query.state) 
+        : '/dashboard';
+
+      if (!req.user?.token) {
+        throw new Error('No token received');
+      }
+
+      res.redirect(
+        `${process.env.FRONTEND_URL}/auth/success?token=${
+          req.user.token
+        }&redirect=${encodeURIComponent(redirectPath)}`
+      );
+    } catch (err) {
+      console.error('GitHub callback error:', err);
+      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+  }
+);
 
 module.exports = router;

@@ -15,7 +15,17 @@ const userSchema = new mongoose.Schema(
 
     fullName: { type: String },
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
+    password: {
+      type: String,
+      required: function () {
+        return this.authMethod === "local"; // Only required for local auth
+      },
+    },
+    authMethod: {
+      type: String,
+      enum: ["local", "google", "github"],
+      default: "local",
+    },
     isAdmin: { type: Boolean, default: false },
 
     // Additional fields for profile
@@ -48,7 +58,8 @@ const userSchema = new mongoose.Schema(
 
 // Hash password before saving
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+  if (!this.isModified("password") || this.authMethod !== "local")
+    return next();
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
