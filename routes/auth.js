@@ -252,4 +252,5 @@ router.get("/verify-token", protect, (req, res) => {
     user: req.user
   });
 });
+
 module.exports = router;

@@ -40,6 +40,10 @@ app.use("/api/auth", require("./routes/auth"));
 app.use("/api/projects", require("./routes/projectRoutes"));
 app.use("/api/uploads", require("./routes/uploadRoutes"));
 app.use('/api/challenge', challengeRoutes);
+// Add this line to your routes section in server.js
+app.use("/api/leaderboard", require("./routes/leaderboardRoutes"));
+// In server.js
+app.use("/api/ratings", require("./routes/ratingRoutes"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

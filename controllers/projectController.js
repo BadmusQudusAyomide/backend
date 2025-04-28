@@ -27,10 +27,14 @@ exports.submitProject = async (req, res) => {
       languages,
       imageUrl,
       submissionDate: new Date(),
+      basePoints: 1, // Initial point
+
     });
 
     await project.save();
-
+await User.findByIdAndUpdate(req.user.id, {
+      $inc: { totalPoints: 1 }
+    });
     res.status(201).json({
       success: true,
       message: "Project submitted successfully",

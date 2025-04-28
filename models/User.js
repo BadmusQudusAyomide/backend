@@ -3,15 +3,16 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    username: { type: String, 
-      unique: true, 
-      // sparse: true, 
+    username: {
+      type: String,
+      unique: true,
+      // sparse: true,
       trim: true,
-    minlength: 3,
-    maxlength: 20,
-    match: /^[a-zA-Z0-9_]+$/
-   },
-      
+      minlength: 3,
+      maxlength: 20,
+      match: /^[a-zA-Z0-9_]+$/,
+    },
+
     fullName: { type: String },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
@@ -21,7 +22,7 @@ const userSchema = new mongoose.Schema(
     bio: { type: String },
     location: { type: String },
     website: { type: String },
-    profileImage: { type: String },
+    profileImage: { type: String, default: null },
     theme: { type: String, default: "light" },
 
     // Activity tracking
@@ -33,7 +34,15 @@ const userSchema = new mongoose.Schema(
       push: { type: Boolean, default: true },
       newsletter: { type: Boolean, default: false },
     },
+    score: { type: Number, default: 0 },
+    lastScoreUpdate: { type: Date },
+    // Add this new field
+    totalPoints: { type: Number, default: 0 },
+
+    // Keep the averageRating for compatibility
+    averageRating: { type: Number, default: 0 },
   },
+
   { timestamps: true }
 );
 

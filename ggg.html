@@ -1,344 +1,451 @@
-const express = require("express");
-const router = express.Router();
-const passport = require("passport");
-const {
-  signup,
-  login,
-  updateProfile,
-} = require("../controllers/authController");
-const { protect, isAdmin } = require("../middleware/authMiddleware");
-const User = require("../models/User");
-const Project = require("../models/Project");
-const jwt = require("jsonwebtoken");
+// models/Rating.js
+const mongoose = require("mongoose");
 
-// Utility: Generate JWT
-const generateToken = (user) => {
-  return jwt.sign(
-    {
-      id: user._id,
-      username: user.username,
-      isAdmin: user.isAdmin,
+const ratingSchema = new mongoose.Schema(
+  {
+    project: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Project",
+      required: true,
     },
-    process.env.JWT_SECRET,
-    { expiresIn: "30d" }
-  );
-};
+    ratedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    // Store each criterion rating
+    criteria: {
+      functionality: { type: Number, default: 0 },
+      design: { type: Number, default: 0 },
+      innovation: { type: Number, default: 0 },
+      codeQuality: { type: Number, default: 0 },
+      completeness: { type: Number, default: 0 },
+    },
+    // Store the calculated average rating
+    averageRating: {
+      type: Number,
+      default: 0,
+    },
+    feedback: {
+      type: String,
+      default: "",
+    },
+  },
+  { timestamps: true }
+);
 
-// Signup & Login routes
-router.post("/signup", signup);
-router.post("/login", login);
+// Ensure one rating per project per admin
+ratingSchema.index({ project: 1, ratedBy: 1 }, { unique: true });
 
-// Admin signup route
-router.post("/admin-signup", async (req, res) => {
+module.exports = mongoose.model("Rating", ratingSchema);
+
+// controllers/ratingController.js
+const Rating = require("../models/Rating");
+const Project = require("../models/Project");
+const User = require("../models/User");
+
+// Submit or update a rating
+// In controllers/ratingController.js
+
+exports.submitRating = async (req, res) => {
   try {
-    const { fullName, username, email, password, adminKey } = req.body;
+    const { projectId, criteria, feedback } = req.body;
+    const adminId = req.user.id;
 
-    if (adminKey !== process.env.ADMIN_REGISTRATION_KEY) {
-      return res
-        .status(403)
-        .json({ message: "Invalid admin registration key" });
-    }
+    // Calculate total points from criteria
+    const criteriaValues = Object.values(criteria).filter((value) => value > 0);
+    const totalPoints = criteriaValues.reduce(
+      (total, value) => total + value,
+      0
+    );
 
-    const emailExists = await User.findOne({ email });
-    if (emailExists) {
-      return res.status(400).json({ message: "Email already in use" });
-    }
+    // Calculate average for backward compatibility
+    const criteriaCount = criteriaValues.length;
+    const sum = criteriaValues.reduce((total, value) => total + value, 0);
+    const averageRating = criteriaCount > 0 ? sum / criteriaCount : 0;
+    const roundedRating = Math.round(averageRating * 10) / 10;
 
-    if (username) {
-      const usernameExists = await User.findOne({ username });
-      if (usernameExists) {
-        return res.status(400).json({ message: "Username already taken" });
-      }
-    }
+    // Check if the admin already rated this project
+    let rating = await Rating.findOne({ project: projectId, ratedBy: adminId });
+    let previousPoints = 0;
 
-    const user = await User.create({
-      fullName,
-      username,
-      email,
-      password,
-      isAdmin: true,
-    });
+    if (rating) {
+      // Calculate previous points before updating
+      previousPoints = Object.values(rating.criteria)
+        .filter((value) => value > 0)
+        .reduce((total, value) => total + value, 0);
 
-    const token = generateToken(user);
-
-    res.status(201).json({
-      success: true,
-      message: "Admin account created successfully",
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        token,
-      },
-    });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Admin registration failed", error: err.message });
-  }
-});
-
-// Update profile route
-router.put("/profile", protect, updateProfile);
-
-// Protected profile route
-// In your auth routes
- // In your auth routes
-router.get('/me', protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id)
-      .select('-password')
-      .lean();
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
+      // Update existing rating
+      rating.criteria = criteria;
+      rating.feedback = feedback;
+      rating.averageRating = roundedRating;
+      await rating.save();
+    } else {
+      // Create new rating
+      rating = await Rating.create({
+        project: projectId,
+        ratedBy: adminId,
+        criteria,
+        feedback,
+        averageRating: roundedRating,
       });
     }
 
-    const stats = await calculateUserStats(req.user.id);
-    
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        username: user.username,
-        email: user.email,
-        profileImage: user.profileImage,
-        ...stats
-      }
-    });
-  } catch (err) {
-    console.error("Error in /me endpoint:", err);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to fetch user data",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-});
+    // Update the project's overall rating based on all admin ratings
+    await updateProjectOverallRating(projectId);
 
-// Admin-only route
-router.get("/admin-only", protect, isAdmin, (req, res) => {
-  res.json({
-    message: "You are an admin!",
-    user: req.user,
-  });
-});
-
-// Google OAuth Routes - Fixed Version
-router.get("/google", (req, res, next) => {
-  // Get the original path or default to dashboard
-  const redirectPath = req.query.redirect || "/dashboard";
-
-  passport.authenticate("google", {
-    scope: ["profile", "email"],
-    session: false,
-    state: JSON.stringify(redirectPath), // Store the original path
-    prompt: "select_account",
-  })(req, res, next);
-});
-
-// In your auth routes file
-// In your auth routes file
-router.get(
-  "/google/callback",
-  passport.authenticate("google", {
-    session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
-  }),
-  (req, res) => {
-    try {
-      // Get the original redirect path or default to dashboard
-      const redirectPath = req.query.state
-        ? JSON.parse(req.query.state)
-        : "/dashboard";
-
-      if (!req.user?.token) {
-        throw new Error("No token received");
-      }
-
-      // Redirect to frontend success handler
-      res.redirect(
-        `${process.env.FRONTEND_URL}/auth/success?token=${
-          req.user.token
-        }&redirect=${encodeURIComponent(redirectPath)}`
-      );
-    } catch (err) {
-      console.error("Google callback error:", err);
-      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    // Update the user's points
+    const project = await Project.findById(projectId);
+    if (project) {
+      await updateUserPoints(project.user, totalPoints - previousPoints);
     }
-  }
-);
 
-// User management routes
-router.get("/users", protect, isAdmin, async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    res.json(users);
+    res.status(200).json({
+      success: true,
+      message: "Rating submitted successfully",
+      rating,
+    });
   } catch (err) {
-    console.error("Error fetching users:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    console.error("Error submitting rating:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to submit rating",
+      error: err.message,
+    });
   }
-});
+};
 
-router.get("/users/count", protect, isAdmin, async (req, res) => {
+// Function to update user points
+async function updateUserPoints(userId, pointsToAdd) {
   try {
-    const count = await User.countDocuments();
-    res.status(200).json({ success: true, count });
+    const user = await User.findById(userId);
+    if (!user) {
+      console.error(`User not found: ${userId}`);
+      return;
+    }
+
+    // Ensure totalPoints is initialized
+    if (typeof user.totalPoints !== "number") {
+      user.totalPoints = 0;
+    }
+
+    // Add the points
+    user.totalPoints += pointsToAdd;
+
+    // Make sure we don't go below zero
+    if (user.totalPoints < 0) {
+      user.totalPoints = 0;
+    }
+
+    await user.save();
+    console.log(
+      `Updated user ${userId} points: ${pointsToAdd} (new total: ${user.totalPoints})`
+    );
   } catch (err) {
-    console.error("Error counting users:", err);
-    res.status(500).json({ success: false, message: "Error counting users" });
+    console.error("Error updating user points:", err);
+    throw err; // Re-throw to handle in calling function
   }
-});
+}
 
-router.get("/users/active", protect, isAdmin, async (req, res) => {
+// Add new function to update user points
+async function updateUserPoints(userId, pointsToAdd) {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const count = await User.countDocuments({ lastActive: { $gte: today } });
-    res.status(200).json({ success: true, count });
+    // Find the user
+    const user = await User.findById(userId);
+    if (user) {
+      // Add new points to the user's total
+      user.totalPoints = (user.totalPoints || 0) + pointsToAdd;
+      
+      // Update user's projects average rating for backward compatibility
+      const userProjects = await Project.find({
+        user: userId,
+        status: "submitted",
+      });
+
+      const ratedProjects = userProjects.filter((p) => p.rating > 0);
+
+      if (ratedProjects.length > 0) {
+        const totalProjectRatings = ratedProjects.reduce(
+          (sum, p) => sum + p.rating,
+          0
+        );
+        const userAverageRating = totalProjectRatings / ratedProjects.length;
+        user.averageRating = parseFloat(userAverageRating.toFixed(2));
+      }
+      
+      await user.save();
+    }
   } catch (err) {
-    console.error("Error counting active users:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error counting active users" });
+    console.error("Error updating user points:", err);
   }
-});
-
-// Helper function
-async function calculateUserStats(userId) {
+}
+// Update project's overall rating based on all ratings it received
+async function updateProjectOverallRating(projectId) {
   try {
-    const projectsSubmitted = await Project.countDocuments({
+    const ratings = await Rating.find({ project: projectId });
+
+    if (ratings.length > 0) {
+      const totalRatings = ratings.reduce((sum, r) => sum + r.averageRating, 0);
+      const averageRating = totalRatings / ratings.length;
+
+      const project = await Project.findById(projectId);
+      if (project) {
+        project.rating = parseFloat(averageRating.toFixed(2));
+        project.ratingCount = ratings.length;
+        await project.save();
+      }
+    }
+  } catch (err) {
+    console.error("Error updating project overall rating:", err);
+  }
+}
+
+// Update user's average score based on all their projects' ratings
+async function updateUserScore(userId) {
+  try {
+    const userProjects = await Project.find({
       user: userId,
       status: "submitted",
     });
 
-    const user = await User.findById(userId).select("challengeStartDate");
-    const startDate = user.challengeStartDate || new Date();
-    const currentDay = Math.min(
-      30,
-      Math.floor((Date.now() - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1
-    );
+    const ratedProjects = userProjects.filter((p) => p.rating > 0);
 
-    const totalParticipants = await User.countDocuments();
-    const usersWithMoreProjects = await User.countDocuments({
-      "stats.projectsSubmitted": { $gt: projectsSubmitted },
-    });
+    if (ratedProjects.length > 0) {
+      const totalProjectRatings = ratedProjects.reduce(
+        (sum, p) => sum + p.rating,
+        0
+      );
+      const userAverageRating = totalProjectRatings / ratedProjects.length;
 
-    const rank =
-      projectsSubmitted > 0 ? usersWithMoreProjects + 1 : totalParticipants;
-
-    return {
-      projectsSubmitted,
-      currentDay,
-      totalParticipants,
-      rank,
-      completionPercentage: Math.round((currentDay / 30) * 100),
-    };
+      const user = await User.findById(userId);
+      if (user) {
+        user.averageRating = parseFloat(userAverageRating.toFixed(2));
+        await user.save();
+      }
+    }
   } catch (err) {
-    console.error("Error calculating user stats:", err);
-    return {
-      projectsSubmitted: 0,
-      currentDay: 1,
-      totalParticipants: 0,
-      rank: 0,
-      completionPercentage: 0,
-    };
+    console.error("Error updating user score:", err);
   }
 }
-// In your auth routes file
-router.get('/verify-token', protect, (req, res) => {
-  res.json({ isValid: true });
-});
-module.exports = router;
 
-require("dotenv").config();
+// Get all ratings for a project
+exports.getProjectRatings = async (req, res) => {
+  try {
+    const { projectId } = req.params;
 
+    const ratings = await Rating.find({ project: projectId }).populate(
+      "ratedBy",
+      "username fullName email"
+    );
+
+    res.status(200).json({
+      success: true,
+      count: ratings.length,
+      ratings,
+    });
+  } catch (err) {
+    console.error("Error fetching ratings:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch ratings",
+      error: err.message,
+    });
+  }
+};
+
+// In routes/leaderboardRoutes.js
 const express = require("express");
+const router = express.Router();
+const { protect } = require("../middleware/authMiddleware");
+const User = require("../models/User");
+const Project = require("../models/Project");
 const mongoose = require("mongoose");
-const cors = require("cors");
-const challengeRoutes = require("./routes/challengeRoutes");
-const app = express();
 
-// Updated CORS configuration
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000", // Your frontend URL
-    credentials: true, // If you're using cookies/sessions
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allowed methods
-    allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
-  })
-);
+// Get leaderboard data with simplified metrics
+// In routes/leaderboardRoutes.js
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+router.get("/leaderboard", protect, async (req, res) => {
+  try {
+    const currentUserId = req.user._id.toString();
 
-const passport = require("passport");
-require("./config/passport");
+    // Get all users with basic info including totalPoints
+    const users = await User.find().select(
+      "_id fullName username profileImage bio createdAt totalPoints"
+    );
 
-app.use(passport.initialize());
-// Add this to your server.js before routes
-if (process.env.NODE_ENV !== "production") {
-  app.use((req, res, next) => {
-    console.log(`Incoming ${req.method} request to ${req.originalUrl}`);
-    console.log("Headers:", req.headers);
-    next();
-  });
+    // Get project stats for all users in one aggregation query
+    const projectStats = await Project.aggregate([
+      { $match: { status: "submitted" } },
+      {
+        $group: {
+          _id: "$user",
+          projectsSubmitted: { $sum: 1 },
+          totalRating: { $sum: "$rating" },
+          ratedProjectsCount: {
+            $sum: { $cond: [{ $gt: ["$rating", 0] }, 1, 0] },
+          },
+          latestSubmission: { $max: "$submissionDate" },
+        },
+      },
+    ]);
+
+    // Create a map of user stats for quick lookup
+    const statsMap = {};
+    projectStats.forEach((stat) => {
+      statsMap[stat._id.toString()] = stat;
+    });
+
+    // Calculate streak for each user
+    const streakData = await calculateUserStreaks();
+
+    // Process user data with their stats
+    const usersWithStats = users.map((user) => {
+      const userId = user._id.toString();
+      const userStats = statsMap[userId] || {
+        projectsSubmitted: 0,
+        totalRating: 0,
+        ratedProjectsCount: 0,
+      };
+
+      // Calculate average rating for display
+      const averageRating =
+        userStats.ratedProjectsCount > 0
+          ? userStats.totalRating / userStats.ratedProjectsCount
+          : 0;
+
+      const userStreak = streakData[userId] || {
+        currentStreak: 0,
+        maxStreak: 0,
+      };
+
+      return {
+        id: userId,
+        name: user.fullName || user.username || "Anonymous User",
+        username: user.username,
+        avatar:
+          user.profileImage ||
+          `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70)}`,
+        projectsSubmitted: userStats.projectsSubmitted || 0,
+        averageRating: parseFloat(averageRating.toFixed(2)), // Keep for backward compatibility
+        totalPoints: user.totalPoints || 0, // Add the points field
+        streak: userStreak.currentStreak || 0,
+        maxStreak: userStreak.maxStreak || 0,
+        isCurrentUser: userId === currentUserId,
+        latestSubmission: userStats.latestSubmission || null,
+      };
+    });
+
+    // Sort users by totalPoints descending (primary) and number of projects (secondary)
+    const sortedUsers = usersWithStats.sort((a, b) => {
+      if (b.totalPoints === a.totalPoints) {
+        return b.projectsSubmitted - a.projectsSubmitted;
+      }
+      return b.totalPoints - a.totalPoints;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: sortedUsers,
+      timestamp: new Date(),
+    });
+  } catch (err) {
+    console.error("Error fetching leaderboard data:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch leaderboard data",
+      error: err.message,
+    });
+  }
+});
+
+// Helper function to calculate user streaks
+async function calculateUserStreaks() {
+  const streakData = {};
+
+  try {
+    // Get all users
+    const users = await User.find().select("_id");
+
+    for (const user of users) {
+      const userId = user._id;
+
+      // Get all submissions for this user, sorted by date
+      const submissions = await Project.find({
+        user: userId,
+        status: "submitted",
+      })
+        .sort({ submissionDate: 1 })
+        .select("submissionDate");
+
+      if (submissions.length === 0) {
+        streakData[userId.toString()] = { currentStreak: 0, maxStreak: 0 };
+        continue;
+      }
+
+      // Calculate streak by checking consecutive days
+      let currentStreak = 1;
+      let maxStreak = 1;
+      let prevDate = new Date(submissions[0].submissionDate);
+
+      for (let i = 1; i < submissions.length; i++) {
+        const currentDate = new Date(submissions[i].submissionDate);
+
+        // Check if dates are consecutive days
+        const diffTime = Math.abs(currentDate - prevDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 1) {
+          currentStreak++;
+          maxStreak = Math.max(maxStreak, currentStreak);
+        } else if (diffDays > 1) {
+          // Streak broken
+          currentStreak = 1;
+        }
+
+        prevDate = currentDate;
+      }
+
+      // Check if streak is still active (submission within last 24 hours)
+      const lastSubmission = new Date(
+        submissions[submissions.length - 1].submissionDate
+      );
+      const now = new Date();
+      const timeSinceLastSubmission = Math.abs(now - lastSubmission);
+      const daysSinceLastSubmission = Math.ceil(
+        timeSinceLastSubmission / (1000 * 60 * 60 * 24)
+      );
+
+      if (daysSinceLastSubmission > 1) {
+        currentStreak = 0;
+      }
+
+      streakData[userId.toString()] = { currentStreak, maxStreak };
+    }
+
+    return streakData;
+  } catch (error) {
+    console.error("Error calculating streaks:", error);
+    return {};
+  }
 }
 
-
-
-// Routes
-app.use("/api/auth", require("./routes/auth"));
-app.use("/api/projects", require("./routes/projectRoutes"));
-app.use("/api/uploads", require("./routes/uploadRoutes"));
-app.use('/api/challenge', challengeRoutes);
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    message: "Server Error",
-    error:
-      process.env.NODE_ENV === "production"
-        ? "Something went wrong"
-        : err.message,
-  });
-});
-
-// DB + Server
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    app.listen(process.env.PORT, () => {
-      console.log(`Server running on port ${process.env.PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-  });
+module.exports = router;
 
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    username: { type: String, 
-      unique: true, 
-      // sparse: true, 
+    username: {
+      type: String,
+      unique: true,
+      // sparse: true,
       trim: true,
-    minlength: 3,
-    maxlength: 20,
-    match: /^[a-zA-Z0-9_]+$/
-   },
-      
+      minlength: 3,
+      maxlength: 20,
+      match: /^[a-zA-Z0-9_]+$/,
+    },
+
     fullName: { type: String },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
@@ -360,7 +467,15 @@ const userSchema = new mongoose.Schema(
       push: { type: Boolean, default: true },
       newsletter: { type: Boolean, default: false },
     },
+    score: { type: Number, default: 0 },
+    lastScoreUpdate: { type: Date },
+    // Add this new field
+    totalPoints: { type: Number, default: 0 },
+
+    // Keep the averageRating for compatibility
+    averageRating: { type: Number, default: 0 },
   },
+
   { timestamps: true }
 );
 
@@ -385,254 +500,276 @@ userSchema.methods.updateLastActive = function () {
 
 module.exports = mongoose.model("User", userSchema);
 
-const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+
+const projectSchema = new mongoose.Schema(
+{
+user: {
+type: mongoose.Schema.Types.ObjectId,
+ref: "User",
+required: true,
+},
+projectName: {
+type: String,
+required: true,
+trim: true,
+},
+liveLink: {
+type: String,
+required: true,
+trim: true,
+},
+repoLink: {
+type: String,
+required: true,
+trim: true,
+},
+description: {
+type: String,
+required: true,
+},
+day: {
+type: Number,
+required: true,
+min: 1,
+max: 30,
+},
+frameworks: {
+type: String,
+trim: true,
+},
+languages: {
+type: String,
+required: true,
+trim: true,
+},
+imageUrl: {
+type: String,
+required: true,
+},
+status: {
+type: String,
+enum: ["draft", "submitted", "approved"],
+default: "submitted",
+},
+submissionDate: {
+type: Date,
+default: Date.now,
+},
+rating: {
+type: Number,
+default: 0,
+},
+ratingCount: {
+type: Number,
+default: 0,
+},
+},
+{ timestamps: true }
+);
+
+module.exports = mongoose.model("Project", projectSchema);
+
+const Project = require("../models/Project");
 const User = require("../models/User");
 
-// Auth Middleware (for logged-in users)
-// In your authMiddleware.js, add more detailed logging
-const protect = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  console.log("Auth header received:", authHeader);
-
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
-    console.log("Extracted token:", token);
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("Token decoded successfully:", decoded);
-      req.user = await User.findById(decoded.id).select("-password");
-      
-      if (!req.user) {
-        console.log("User not found for ID:", decoded.id);
-        return res.status(401).json({ message: "User not found" });
-      }
-      
-      next();
-    } catch (err) {
-      console.error("Token verification error:", err);
-      return res.status(401).json({ message: "Invalid or expired token" });
-    }
-  } else {
-    console.log("No valid auth header found");
-    return res.status(401).json({ message: "No token provided" });
-  }
-};
-
-// Admin Middleware (must be logged in and isAdmin === true)
-const isAdmin = (req, res, next) => {
-  if (req.user && req.user.isAdmin) {
-    next();
-  } else {
-    return res.status(403).json({ message: "Admin access denied" });
-  }
-};
-
-module.exports = { protect, isAdmin };
-
-
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
-
-// In authController.js
-const generateToken = (user) => {
-  const payload = {
-    id: user._id,
-    username: user.username,
-    isAdmin: user.isAdmin
-  };
-  console.log("Token payload:", payload);
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
-};
-
-// Signup
-exports.signup = async (req, res) => {
-  const { fullName, email, password, username } = req.body;
- 
+// Create/submit a new project
+exports.submitProject = async (req, res) => {
   try {
-    // Check if email already exists
-    const emailExists = await User.findOne({ email });
-    if (emailExists) {
-      return res.status(400).json({ message: "Email already in use" });
-    }
-    // Check if username exists (if provided)
-    if (username) {
-      const usernameExists = await User.findOne({ username });
-      if (usernameExists) {
-        return res.status(400).json({ message: "Username already taken" });
-      }
-    }
-    const user = await User.create({ fullName, email, password, username });
-   
-    res.status(201).json({
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        token: generateToken(user),
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Signup failed", error: err.message });
-  }
-};
-
-// Login
-exports.login = async (req, res) => {
-  const { emailOrUsername, password } = req.body;
-  try {
-    const user = await User.findOne({
-      $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
-    });
-    if (!user) return res.status(400).json({ message: "User not found" });
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid password" });
-    
-    res.json({
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        bio: user.bio,
-        location: user.location,
-        website: user.website,
-        profileImage: user.profileImage,
-        theme: user.theme,
-        notifications: user.notifications,
-        token: generateToken(user),
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Login failed", error: err.message });
-  }
-};
-
-// Update user profile
-exports.updateProfile = async (req, res) => {
-  try {
-    const userId = req.user._id;
     const {
-      fullName,
-      username,
-      bio,
-      location,
-      website,
-      theme,
-      notifications,
-      // Do not allow password or email updates through this route
+      projectName,
+      liveLink,
+      repoLink,
+      description,
+      day,
+      frameworks,
+      languages,
+      imageUrl, // This will be provided after image upload
     } = req.body;
 
-    // If username is changing, check if it already exists
-    if (username && username !== req.user.username) {
-      const usernameExists = await User.findOne({ 
-        username, 
-        _id: { $ne: userId } // Exclude current user from check
-      });
-      
-      if (usernameExists) {
-        return res.status(400).json({ message: "Username already taken" });
-      }
-    }
+    // Create the project
+    const project = new Project({
+      user: req.user.id,
+      projectName,
+      liveLink,
+      repoLink,
+      description,
+      day: parseInt(day),
+      frameworks,
+      languages,
+      imageUrl,
+      submissionDate: new Date(),
+    });
 
-    // Get current user and update fields
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    await project.save();
 
-    // Update only the fields that are provided
-    if (fullName !== undefined) user.fullName = fullName;
-    if (username !== undefined) user.username = username;
-    
-    // Update optional fields if provided
-    if (bio !== undefined) user.bio = bio;
-    if (location !== undefined) user.location = location;
-    if (website !== undefined) user.website = website;
-    if (theme !== undefined) user.theme = theme;
-    if (notifications !== undefined) user.notifications = notifications;
-
-    // Save the updated user
-    await user.save();
-
-    // Return updated user data (excluding password)
-    const userData = user.toObject();
-    delete userData.password;
-
-    res.json({
+    res.status(201).json({
       success: true,
-      message: "Profile updated successfully",
-      user: {
-        ...userData,
-        token: req.headers.authorization.split(" ")[1], // Return the same token
-      }
+      message: "Project submitted successfully",
+      project,
     });
   } catch (err) {
-    res.status(500).json({ 
-      message: "Profile update failed", 
-      error: err.message 
+    console.error("Error submitting project:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
     });
   }
 };
 
+// Get all projects (admin only)
+exports.getAllProjects = async (req, res) => {
+  try {
+    const projects = await Project.find()
+      .populate("user", "username email")
+      .sort({ submissionDate: -1 });
 
-const passport = require("passport");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
-
-// Helper function to generate random username
-const generateUsername = (email, displayName) => {
-  // Use email prefix or sanitized display name
-  const base =
-    email.split("@")[0] || displayName.toLowerCase().replace(/\s+/g, "");
-
-  // Add random 4-digit number to ensure uniqueness
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-
-  return `${base}${randomSuffix}`;
+    res.status(200).json({
+      success: true,
+      count: projects.length,
+      projects,
+    });
+  } catch (err) {
+    console.error("Error fetching projects:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
 };
 
-// In your passport configuration file
-// In your passport Google strategy
-passport.use(new GoogleStrategy({
-  clientID: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL
-}, async (accessToken, refreshToken, profile, done) => {
+// Get current user's projects
+exports.getUserProjects = async (req, res) => {
   try {
-    const email = profile.emails[0].value;
-    let user = await User.findOne({ email });
+    const projects = await Project.find({ user: req.user.id }).sort({ day: 1 });
 
-    if (!user) {
-      user = await User.create({
-        fullName: profile.displayName,
-        email,
-        profileImage: profile.photos[0]?.value,
-        authMethod: 'google',
-        isVerified: true
-      });
-    }
+    res.status(200).json({
+      success: true,
+      count: projects.length,
+      projects,
+    });
+  } catch (err) {
+    console.error("Error fetching user projects:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
 
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
+// Get project by ID
+exports.getProjectById = async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id).populate(
+      "user",
+      "username email"
     );
 
-    // Include basic user data in the token response
-    done(null, { 
-      token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email
-      }
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // Check if the project belongs to the user or if the user is an admin
+    if (project.user._id.toString() !== req.user.id && !req.user.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to access this project",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      project,
     });
   } catch (err) {
-    done(err, null);
+    console.error("Error fetching project:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
   }
-}));
+};
+
+// Update project
+exports.updateProject = async (req, res) => {
+  try {
+    let project = await Project.findById(req.params.id);
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // Check if the project belongs to the user
+    if (project.user.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this project",
+      });
+    }
+
+    project = await Project.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Project updated successfully",
+      project,
+    });
+  } catch (err) {
+    console.error("Error updating project:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+// Delete project
+exports.deleteProject = async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // Check if the project belongs to the user or if the user is an admin
+    if (project.user.toString() !== req.user.id && !req.user.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete this project",
+      });
+    }
+
+    await project.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: "Project deleted successfully",
+    });
+  } catch (err) {
+    console.error("Error deleting project:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
