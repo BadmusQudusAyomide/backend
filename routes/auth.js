@@ -191,15 +191,24 @@ router.get("/users/count", protect, isAdmin, async (req, res) => {
 
 router.get("/users/active", protect, isAdmin, async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const count = await User.countDocuments({ lastActive: { $gte: today } });
+    // Get WAT midnight
+    const watOffset = 60 * 60 * 1000; // UTC+1
+    const watNow = new Date(Date.now() + watOffset);
+    const watMidnight = new Date(watNow);
+    watMidnight.setHours(0, 0, 0, 0);
+    watMidnight.setTime(watMidnight.getTime() - watOffset); // Convert back to UTC
+
+    const count = await User.countDocuments({ 
+      lastActive: { $gte: watMidnight } 
+    });
+    
     res.status(200).json({ success: true, count });
   } catch (err) {
     console.error("Error counting active users:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error counting active users" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Error counting active users" 
+    });
   }
 });
 
