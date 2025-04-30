@@ -191,3 +191,23 @@ exports.getProjectRatings = async (req, res) => {
     });
   }
 };
+
+// In ratingController.js
+exports.getProjectRatings = async (req, res) => {
+  try {
+    const ratings = await Rating.find({ project: req.params.projectId })
+      .populate('ratedBy', 'fullName')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      ratings
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch ratings',
+      error: err.message
+    });
+  }
+};
