@@ -47,6 +47,7 @@ const protect = async (req, res, next) => {
   }
 };
 
+
 const isAdmin = (req, res, next) => {
   console.log("Checking admin status for user:", req.user?.email); // Debug log
   if (req.user && req.user.isAdmin) {

@@ -1,10 +1,11 @@
 // In routes/leaderboardRoutes.js
 const express = require("express");
 const router = express.Router();
-const { protect } = require("../middleware/authMiddleware");
+const { protect , isAdmin } = require("../middleware/authMiddleware");
 const User = require("../models/User");
 const Project = require("../models/Project");
 const mongoose = require("mongoose");
+
 
 // Get leaderboard data with simplified metrics
 router.get("/leaderboard", protect, async (req, res) => {
@@ -167,6 +168,129 @@ async function calculateUserStreaks() {
   } catch (error) {
     console.error("Error calculating streaks:", error);
     return {};
+  }
+}
+
+// Add this to your leaderboardRoutes.js
+router.get("/export", protect, isAdmin, async (req, res) => {
+  try {
+    // Get leaderboard data
+    const leaderboardData = await getLeaderboardData();
+
+    // Prepare CSV data
+    const fields = [
+      { label: "Rank", value: "rank" },
+      { label: "Name", value: "name" },
+      { label: "Username", value: "username" },
+      { label: "Projects Submitted", value: "projectsSubmitted" },
+      { label: "Average Rating", value: "averageRating" },
+      { label: "Total Points", value: "totalPoints" },
+      { label: "Current Streak", value: "streak" },
+      { label: "Max Streak", value: "maxStreak" },
+      { label: "Last Submission", value: "latestSubmission" },
+    ];
+
+    const opts = { fields };
+    const parser = new Parser(opts);
+    const csv = parser.parse(leaderboardData);
+
+    // Set headers and send CSV
+    res.header("Content-Type", "text/csv");
+    res.attachment(`leaderboard_export_${new Date().toISOString().split('T')[0]}.csv`);
+    return res.send(csv);
+  } catch (err) {
+    console.error("Leaderboard export error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate leaderboard CSV export",
+      error: err.message,
+    });
+  }
+});
+
+async function getLeaderboardData() {
+  try {
+    // Get all users with basic info including totalPoints
+    const users = await User.find().select(
+      "_id fullName username profileImage bio createdAt totalPoints"
+    );
+
+    // Get project stats for all users in one aggregation query
+    const projectStats = await Project.aggregate([
+      { $match: { status: "submitted" } },
+      {
+        $group: {
+          _id: "$user",
+          projectsSubmitted: { $sum: 1 },
+          totalRating: { $sum: "$rating" },
+          ratedProjectsCount: {
+            $sum: { $cond: [{ $gt: ["$rating", 0] }, 1, 0] },
+          },
+          latestSubmission: { $max: "$submissionDate" },
+        },
+      },
+    ]);
+
+    // Create a map of user stats for quick lookup
+    const statsMap = {};
+    projectStats.forEach((stat) => {
+      statsMap[stat._id.toString()] = stat;
+    });
+
+    // Calculate streak for each user
+    const streakData = await calculateUserStreaks();
+
+    // Process user data with their stats
+    const usersWithStats = users.map((user) => {
+      const userId = user._id.toString();
+      const userStats = statsMap[userId] || {
+        projectsSubmitted: 0,
+        totalRating: 0,
+        ratedProjectsCount: 0,
+      };
+
+      // Calculate average rating for display
+      const averageRating =
+        userStats.ratedProjectsCount > 0
+          ? userStats.totalRating / userStats.ratedProjectsCount
+          : 0;
+
+      const userStreak = streakData[userId] || {
+        currentStreak: 0,
+        maxStreak: 0,
+      };
+
+      return {
+        name: user.fullName || user.username || "Anonymous User",
+        username: user.username,
+        projectsSubmitted: userStats.projectsSubmitted || 0,
+        averageRating: parseFloat(averageRating.toFixed(2)),
+        totalPoints: user.totalPoints || 0,
+        streak: userStreak.currentStreak || 0,
+        maxStreak: userStreak.maxStreak || 0,
+        latestSubmission: userStats.latestSubmission || null,
+      };
+    });
+
+    // Sort users by totalPoints descending (primary) and number of projects (secondary)
+    const sortedUsers = usersWithStats.sort((a, b) => {
+      if (b.totalPoints === a.totalPoints) {
+        return b.projectsSubmitted - a.projectsSubmitted;
+      }
+      return b.totalPoints - a.totalPoints;
+    });
+
+    // Add rank to each user
+    return sortedUsers.map((user, index) => ({
+      rank: index + 1,
+      ...user,
+      latestSubmission: user.latestSubmission 
+        ? new Date(user.latestSubmission).toLocaleString()
+        : "Never",
+    }));
+  } catch (error) {
+    console.error("Error getting leaderboard data:", error);
+    return [];
   }
 }
 
