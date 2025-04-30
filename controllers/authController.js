@@ -6,7 +6,7 @@ const generateToken = (user) => {
   const payload = {
     id: user._id,
     username: user.username,
-    isAdmin: user.isAdmin
+    isAdmin: user.isAdmin,
   };
   console.log("Token payload:", payload);
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -15,7 +15,7 @@ const generateToken = (user) => {
 // Signup
 exports.signup = async (req, res) => {
   const { fullName, email, password, username } = req.body;
- 
+
   try {
     // Check if email already exists
     const emailExists = await User.findOne({ email });
@@ -29,14 +29,14 @@ exports.signup = async (req, res) => {
         return res.status(400).json({ message: "Username already taken" });
       }
     }
-    const user = await User.create({ 
-      fullName, 
-      email, 
-      password, 
+    const user = await User.create({
+      fullName,
+      email,
+      password,
       username,
-      authMethod: 'local' 
+      authMethod: "local",
     });
-   
+
     res.status(201).json({
       user: {
         id: user._id,
@@ -45,7 +45,7 @@ exports.signup = async (req, res) => {
         email: user.email,
         isAdmin: user.isAdmin,
         token: generateToken(user),
-      }
+      },
     });
   } catch (err) {
     res.status(500).json({ message: "Signup failed", error: err.message });
@@ -62,7 +62,7 @@ exports.login = async (req, res) => {
     if (!user) return res.status(400).json({ message: "User not found" });
     const isMatch = await user.comparePassword(password);
     if (!isMatch) return res.status(400).json({ message: "Invalid password" });
-    
+
     res.json({
       user: {
         id: user._id,
@@ -101,11 +101,11 @@ exports.updateProfile = async (req, res) => {
 
     // If username is changing, check if it already exists
     if (username && username !== req.user.username) {
-      const usernameExists = await User.findOne({ 
-        username, 
-        _id: { $ne: userId } // Exclude current user from check
+      const usernameExists = await User.findOne({
+        username,
+        _id: { $ne: userId }, // Exclude current user from check
       });
-      
+
       if (usernameExists) {
         return res.status(400).json({ message: "Username already taken" });
       }
@@ -113,7 +113,7 @@ exports.updateProfile = async (req, res) => {
 
     // Get current user and update fields
     const user = await User.findById(userId);
-    
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -121,7 +121,7 @@ exports.updateProfile = async (req, res) => {
     // Update only the fields that are provided
     if (fullName !== undefined) user.fullName = fullName;
     if (username !== undefined) user.username = username;
-    
+
     // Update optional fields if provided
     if (bio !== undefined) user.bio = bio;
     if (location !== undefined) user.location = location;
@@ -142,12 +142,12 @@ exports.updateProfile = async (req, res) => {
       user: {
         ...userData,
         token: req.headers.authorization.split(" ")[1], // Return the same token
-      }
+      },
     });
   } catch (err) {
-    res.status(500).json({ 
-      message: "Profile update failed", 
-      error: err.message 
+    res.status(500).json({
+      message: "Profile update failed",
+      error: err.message,
     });
   }
 };

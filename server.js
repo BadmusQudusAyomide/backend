@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -69,4 +70,3 @@ mongoose
   .catch((err) => {
     console.error("MongoDB connection error:", err);
   });
-

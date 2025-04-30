@@ -292,5 +292,60 @@ router.get('/github/callback',
   }
 );
 
+// In your auth.js or community.js routes file
+
+// Get all community data in one endpoint
+router.get('/community/all-data', protect, async (req, res) => {
+  try {
+    // 1. Get current user
+    const currentUser = await User.findById(req.user.id)
+      .select('fullName username profileImage role');
+    
+    // 2. Get community users (excluding current user)
+    const users = await User.find({ _id: { $ne: req.user.id } })
+      .select('fullName username profileImage bio role projectsCount')
+      .sort({ projectsCount: -1 })
+      .limit(10);
+
+    // 3. Get recent projects
+    const recentProjects = await Project.find()
+      .populate('user', 'fullName username profileImage')
+      .sort({ createdAt: -1 })
+      .limit(4);
+
+    // 4. Get community posts (if you implement this later)
+    // const posts = await Post.find().populate('user')...
+
+    res.json({
+      success: true,
+      data: {
+        currentUser,
+        users: users.map(user => ({
+          ...user._doc,
+          submissions: user.projectsCount,
+          name: user.fullName || user.username
+        })),
+        popularSubmissions: recentProjects.map(project => ({
+          id: project._id,
+          title: project.projectName,
+          author: project.user.fullName || project.user.username,
+          authorUsername: project.user.username,
+          likes: project.likes || 0,
+          views: project.views || 0,
+          thumbnail: project.imageUrl || `https://via.placeholder.com/150?text=${project.projectName.charAt(0)}`,
+          description: project.description
+        })),
+        // posts: [] // Add when you implement posts
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching community data:', err);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching community data'
+    });
+  }
+});
+
 
 module.exports = router;

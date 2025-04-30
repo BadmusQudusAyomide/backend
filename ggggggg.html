@@ -1,0 +1,761 @@
+const nodemailer = require('nodemailer');
+require('dotenv').config();
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // or your email service
+  auth: {
+    user: process.env.EMAIL_USERNAME,
+    pass: process.env.EMAIL_PASSWORD,
+  },
+});
+
+const sendVerificationEmail = async (email, verificationToken) => {
+  const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+  
+  const mailOptions = {
+    from: `"Your App Name" <${process.env.EMAIL_USERNAME}>`,
+    to: email,
+    subject: 'Verify Your Email Address',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Email Verification</h2>
+        <p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
+        <a href="${verificationUrl}" style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;">Verify Email</a>
+        <p>If you didn't create an account with us, please ignore this email.</p>
+        <p style="margin-top: 30px; font-size: 12px; color: #777;">This link will expire in 24 hours.</p>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Verification email sent to ${email}`);
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    throw new Error('Failed to send verification email');
+  }
+};
+
+module.exports = { sendVerificationEmail };
+
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+
+const userSchema = new mongoose.Schema(
+  {
+    username: {
+      type: String,
+      unique: true,
+      // sparse: true,
+      trim: true,
+      minlength: 3,
+      maxlength: 20,
+      match: /^[a-zA-Z0-9_]+$/,
+    },
+
+    fullName: { type: String },
+    email: { type: String, required: true, unique: true },
+    password: {
+      type: String,
+      required: function () {
+        return this.authMethod === "local"; // Only required for local auth
+      },
+    },
+    authMethod: {
+      type: String,
+      enum: ["local", "google", "github"],
+      default: "local",
+    },
+    isAdmin: { type: Boolean, default: false },
+
+    // Additional fields for profile
+    bio: { type: String },
+    location: { type: String },
+    website: { type: String },
+    profileImage: { type: String, default: null },
+    theme: { type: String, default: "light" },
+
+    // Activity tracking
+    lastActive: { type: Date, default: Date.now },
+    isActive: { type: Boolean, default: true },
+
+    notifications: {
+      email: { type: Boolean, default: true },
+      push: { type: Boolean, default: true },
+      newsletter: { type: Boolean, default: false },
+    },
+    score: { type: Number, default: 0 },
+    lastScoreUpdate: { type: Date },
+    // Add this new field
+    totalPoints: { type: Number, default: 0 },
+
+    // Keep the averageRating for compatibility
+    averageRating: { type: Number, default: 0 },
+
+  isVerified: { type: Boolean, default: false },
+  verificationToken: { type: String },
+  verificationTokenExpires: { type: Date },
+
+  },
+
+  { timestamps: true }
+);
+
+// Hash password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password") || this.authMethod !== "local")
+    return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+// Compare password method
+userSchema.methods.comparePassword = function (password) {
+  return bcrypt.compare(password, this.password);
+};
+
+// Update lastActive timestamp on login
+userSchema.methods.updateLastActive = function () {
+  this.lastActive = new Date();
+  return this.save();
+};
+
+module.exports = mongoose.model("User", userSchema);
+
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+const { v4: uuidv4 } = require("uuid");
+const { sendVerificationEmail } = require("../utils/emailSender");
+
+// In authController.js
+const generateToken = (user) => {
+  const payload = {
+    id: user._id,
+    username: user.username,
+    isAdmin: user.isAdmin,
+  };
+  console.log("Token payload:", payload);
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+};
+
+// Signup
+exports.signup = async (req, res) => {
+  const { fullName, email, password, username } = req.body;
+
+  try {
+    // Check if email already exists
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+
+    // Check if username exists (if provided)
+    if (username) {
+      const usernameExists = await User.findOne({ username });
+      if (usernameExists) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+    }
+
+    // Generate verification token
+    const verificationToken = uuidv4();
+    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    const user = await User.create({
+      fullName,
+      email,
+      password,
+      username,
+      authMethod: "local",
+      verificationToken,
+      verificationTokenExpires,
+    });
+
+    // Send verification email
+    await sendVerificationEmail(email, verificationToken);
+
+    res.status(201).json({
+      success: true,
+      message:
+        "Signup successful! Please check your email to verify your account.",
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        isVerified: user.isVerified,
+        token: generateToken(user),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Signup failed", error: err.message });
+  }
+};
+
+// Add new verification function
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired verification token",
+      });
+    }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Email verified successfully!",
+      user: {
+        id: user._id,
+        email: user.email,
+        isVerified: user.isVerified,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Email verification failed",
+      error: err.message,
+    });
+  }
+};
+
+// Login
+exports.login = async (req, res) => {
+  const { emailOrUsername, password } = req.body;
+  try {
+    const user = await User.findOne({
+      $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
+    });
+
+    if (!user) return res.status(400).json({ message: "User not found" });
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid password" });
+
+    // Check if email is verified (only for local auth)
+    if (user.authMethod === "local" && !user.isVerified) {
+      return res.status(403).json({
+        message:
+          "Email not verified. Please check your email for verification link.",
+        isVerified: false,
+        email: user.email,
+      });
+    }
+
+    res.json({
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        bio: user.bio,
+        location: user.location,
+        website: user.website,
+        profileImage: user.profileImage,
+        theme: user.theme,
+        notifications: user.notifications,
+        token: generateToken(user),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Login failed", error: err.message });
+  }
+};
+
+// Update user profile
+exports.updateProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const {
+      fullName,
+      username,
+      bio,
+      location,
+      website,
+      theme,
+      notifications,
+      // Do not allow password or email updates through this route
+    } = req.body;
+
+    // If username is changing, check if it already exists
+    if (username && username !== req.user.username) {
+      const usernameExists = await User.findOne({
+        username,
+        _id: { $ne: userId }, // Exclude current user from check
+      });
+
+      if (usernameExists) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+    }
+
+    // Get current user and update fields
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Update only the fields that are provided
+    if (fullName !== undefined) user.fullName = fullName;
+    if (username !== undefined) user.username = username;
+
+    // Update optional fields if provided
+    if (bio !== undefined) user.bio = bio;
+    if (location !== undefined) user.location = location;
+    if (website !== undefined) user.website = website;
+    if (theme !== undefined) user.theme = theme;
+    if (notifications !== undefined) user.notifications = notifications;
+
+    // Save the updated user
+    await user.save();
+
+    // Return updated user data (excluding password)
+    const userData = user.toObject();
+    delete userData.password;
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      user: {
+        ...userData,
+        token: req.headers.authorization.split(" ")[1], // Return the same token
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Profile update failed",
+      error: err.message,
+    });
+  }
+};
+
+const express = require("express");
+const router = express.Router();
+const passport = require("passport");
+const { verifyEmail } = require('../controllers/authController');
+
+const {
+  signup,
+  login,
+  updateProfile,
+} = require("../controllers/authController");
+const { protect, isAdmin } = require("../middleware/authMiddleware");
+const User = require("../models/User");
+const Project = require("../models/Project");
+const jwt = require("jsonwebtoken");
+
+// Utility: Generate JWT
+const generateToken = (user) => {
+  return jwt.sign(
+    {
+      id: user._id,
+      username: user.username,
+      isAdmin: user.isAdmin,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
+  );
+};
+
+router.get("/verify-email/:token", verifyEmail);
+
+// Signup & Login routes
+router.post("/signup", signup);
+router.post("/login", login);
+
+
+// Admin signup route
+router.post("/admin-signup", async (req, res) => {
+  try {
+    const { fullName, username, email, password, adminKey } = req.body;
+
+    if (adminKey !== process.env.ADMIN_REGISTRATION_KEY) {
+      return res
+        .status(403)
+        .json({ message: "Invalid admin registration key" });
+    }
+
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+
+    if (username) {
+      const usernameExists = await User.findOne({ username });
+      if (usernameExists) {
+        return res.status(400).json({ message: "Username already taken" });
+      }
+    }
+
+    const user = await User.create({
+      fullName,
+      username,
+      email,
+      password,
+      isAdmin: true,
+    });
+
+    const token = generateToken(user);
+
+    res.status(201).json({
+      success: true,
+      message: "Admin account created successfully",
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        token,
+      },
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Admin registration failed", error: err.message });
+  }
+});
+
+// Update profile route
+router.put("/profile", protect, updateProfile);
+
+// Protected profile route
+// In your auth routes
+ // In your auth routes
+router.get("/me", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password").lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        ...user,
+        isAdmin: user.isAdmin || false, // Ensure isAdmin is always present
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch user data",
+    });
+  }
+});
+
+// Admin-only route
+router.get("/admin-only", protect, isAdmin, (req, res) => {
+  res.json({
+    message: "You are an admin!",
+    user: req.user,
+  });
+});
+
+// Google OAuth Routes - Fixed Version
+router.get("/google", (req, res, next) => {
+  // Get the original path or default to dashboard
+  const redirectPath = req.query.redirect || "/dashboard";
+
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    session: false,
+    state: JSON.stringify(redirectPath), // Store the original path
+    prompt: "select_account",
+  })(req, res, next);
+});
+
+// In your auth routes file
+// In your auth routes file
+router.get(
+  "/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
+  }),
+  (req, res) => {
+    try {
+      // Get the original redirect path or default to dashboard
+      const redirectPath = req.query.state
+        ? JSON.parse(req.query.state)
+        : "/dashboard";
+
+      if (!req.user?.token) {
+        throw new Error("No token received");
+      }
+
+      // Redirect to frontend success handler
+      res.redirect(
+        `${process.env.FRONTEND_URL}/auth/success?token=${
+          req.user.token
+        }&redirect=${encodeURIComponent(redirectPath)}`
+      );
+    } catch (err) {
+      console.error("Google callback error:", err);
+      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+  }
+);
+
+// User management routes
+router.get("/users", protect, isAdmin, async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+    res.json(users);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+
+
+
+router.get("/users/count", protect, isAdmin, async (req, res) => {
+  try {
+    const count = await User.countDocuments();
+    res.status(200).json({ success: true, count });
+  } catch (err) {
+    console.error("Error counting users:", err);
+    res.status(500).json({ success: false, message: "Error counting users" });
+  }
+});
+
+router.get("/users/active", protect, isAdmin, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const count = await User.countDocuments({ lastActive: { $gte: today } });
+    res.status(200).json({ success: true, count });
+  } catch (err) {
+    console.error("Error counting active users:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error counting active users" });
+  }
+});
+
+// Helper function
+async function calculateUserStats(userId) {
+  try {
+    const projectsSubmitted = await Project.countDocuments({
+      user: userId,
+      status: "submitted",
+    });
+
+    const user = await User.findById(userId).select("challengeStartDate");
+    const startDate = user.challengeStartDate || new Date();
+    const currentDay = Math.min(
+      30,
+      Math.floor((Date.now() - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1
+    );
+
+    const totalParticipants = await User.countDocuments();
+    const usersWithMoreProjects = await User.countDocuments({
+      "stats.projectsSubmitted": { $gt: projectsSubmitted },
+    });
+
+    const rank =
+      projectsSubmitted > 0 ? usersWithMoreProjects + 1 : totalParticipants;
+
+    return {
+      projectsSubmitted,
+      currentDay,
+      totalParticipants,
+      rank,
+      completionPercentage: Math.round((currentDay / 30) * 100),
+    };
+  } catch (err) {
+    console.error("Error calculating user stats:", err);
+    return {
+      projectsSubmitted: 0,
+      currentDay: 1,
+      totalParticipants: 0,
+      rank: 0,
+      completionPercentage: 0,
+    };
+  }
+}
+// In your auth routes file
+router.get('/verify-token', protect, (req, res) => {
+  res.json({ isValid: true });
+});
+router.get("/verify-token", protect, (req, res) => {
+  res.json({
+    success: true,
+    isAdmin: req.user.isAdmin || false,
+    user: req.user
+  });
+});
+// GitHub OAuth Routes
+router.get('/github', (req, res, next) => {
+  const redirectPath = req.query.redirect || '/dashboard';
+  passport.authenticate('github', {
+    scope: ['user:email'],
+    session: false,
+    state: JSON.stringify(redirectPath)
+  })(req, res, next);
+});
+
+router.get('/github/callback', 
+  passport.authenticate('github', {
+    session: false,
+    failureRedirect: `${process.env.FRONTEND_URL}/login?error=github_auth_failed`
+  }),
+  (req, res) => {
+    try {
+      const redirectPath = req.query.state 
+        ? JSON.parse(req.query.state) 
+        : '/dashboard';
+
+      if (!req.user?.token) {
+        throw new Error('No token received');
+      }
+
+      res.redirect(
+        `${process.env.FRONTEND_URL}/auth/success?token=${
+          req.user.token
+        }&redirect=${encodeURIComponent(redirectPath)}`
+      );
+    } catch (err) {
+      console.error('GitHub callback error:', err);
+      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+  }
+);
+router.post('/resend-verification', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Email is already verified" });
+    }
+
+    // Generate new verification token
+    const verificationToken = uuidv4();
+    user.verificationToken = verificationToken;
+    user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save();
+
+    // Send verification email
+    await sendVerificationEmail(user.email, verificationToken);
+
+    res.json({
+      success: true,
+      message: "Verification email resent successfully"
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to resend verification email",
+      error: err.message
+    });
+  }
+});
+
+
+module.exports = router;
+
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+
+const protect = async (req, res, next) => {
+  console.log("Protect middleware triggered"); // Debug log
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    console.log("No authorization header found");
+    return res.status(401).json({
+      success: false,
+      message: "No token provided",
+    });
+  }
+
+  if (!authHeader.startsWith("Bearer ")) {
+    console.log("Malformed authorization header");
+    return res.status(401).json({
+      success: false,
+      message: "Invalid token format",
+    });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    console.log("Verifying token:", token.substring(0, 10) + "..."); // Log partial token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log("Decoded token:", decoded);
+
+    const user = await User.findById(decoded.id).select("-password");
+    if (!user) {
+      console.log("User not found in database");
+      return res.status(401).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    console.log("Authenticated user:", user.email);
+    req.user = user;
+    user.lastActive = new Date();
+    await user.save();
+
+    if (user.authMethod === 'local' && !user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email address to access this resource",
+        isVerified: false
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error("Token verification error:", err.message);
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired token",
+      error: err.message, // Include specific error message
+    });
+  }
+};
+
+const isAdmin = (req, res, next) => {
+  console.log("Checking admin status for user:", req.user?.email); // Debug log
+  if (req.user && req.user.isAdmin) {
+    console.log("Admin access granted");
+    next();
+  } else {
+    console.log("Admin access denied");
+    return res.status(403).json({
+      success: false,
+      message: "Admin access denied",
+      userIsAdmin: req.user?.isAdmin,
+    });
+  }
+};
+
+module.exports = { protect, isAdmin };
