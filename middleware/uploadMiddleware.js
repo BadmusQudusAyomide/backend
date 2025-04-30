@@ -19,7 +19,7 @@ const storage = new CloudinaryStorage({
   },
 });
 
-// Configure upload settings
+// Configuring upload settings
 const upload = multer({
   storage: storage,
   limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit

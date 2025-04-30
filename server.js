@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -28,19 +27,16 @@ app.use(passport.initialize());
 // Add this to your server.js before routes
 if (process.env.NODE_ENV !== "production") {
   app.use((req, res, next) => {
-    console.log(`Incoming ${req.method} request to ${req.originalUrl}`);
-    console.log("Headers:", req.headers);
+
     next();
   });
 }
-
-
 
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/projects", require("./routes/projectRoutes"));
 app.use("/api/uploads", require("./routes/uploadRoutes"));
-app.use('/api/challenge', challengeRoutes);
+app.use("/api/challenge", challengeRoutes);
 // Add this line to your routes section in server.js
 app.use("/api/leaderboard", require("./routes/leaderboardRoutes"));
 // In server.js
@@ -48,7 +44,6 @@ app.use("/api/ratings", require("./routes/ratingRoutes"));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
   res.status(500).json({
     success: false,
     message: "Server Error",
@@ -70,3 +65,4 @@ mongoose
   .catch((err) => {
     console.error("MongoDB connection error:", err);
   });
+

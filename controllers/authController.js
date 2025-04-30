@@ -8,7 +8,6 @@ const generateToken = (user) => {
     username: user.username,
     isAdmin: user.isAdmin,
   };
-  console.log("Token payload:", payload);
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 

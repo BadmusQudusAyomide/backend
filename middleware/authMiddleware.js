@@ -24,9 +24,7 @@ const protect = async (req, res, next) => {
   const token = authHeader.split(" ")[1];
 
   try {
-    console.log("Verifying token:", token.substring(0, 10) + "..."); // Log partial token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log("Decoded token:", decoded);
 
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
@@ -37,7 +35,6 @@ const protect = async (req, res, next) => {
       });
     }
 
-    console.log("Authenticated user:", user.email);
     req.user = user;
     user.lastActive = new Date();
     await user.save();
