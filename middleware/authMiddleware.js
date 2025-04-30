@@ -2,11 +2,9 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 const protect = async (req, res, next) => {
-  console.log("Protect middleware triggered"); // Debug log
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    console.log("No authorization header found");
     return res.status(401).json({
       success: false,
       message: "No token provided",
@@ -14,7 +12,6 @@ const protect = async (req, res, next) => {
   }
 
   if (!authHeader.startsWith("Bearer ")) {
-    console.log("Malformed authorization header");
     return res.status(401).json({
       success: false,
       message: "Invalid token format",
