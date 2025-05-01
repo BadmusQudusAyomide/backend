@@ -184,5 +184,46 @@ router.get("/users/:id", protect, isAdmin, async (req, res) => {
   }
 });
 
+// In your routes file (e.g., challengeRoutes.js or adminRoutes.js)
+router.post("/reset-challenge", protect, isAdmin, async (req, res) => {
+  try {
+    // 1. Reset all projects
+    await Project.deleteMany({});
+    
+    // 2. Reset user challenge-related data but keep accounts
+    await User.updateMany({}, {
+      $set: {
+        totalPoints: 0,
+        averageRating: 0,
+        // Add any other challenge-specific fields you want to reset
+      }
+    });
+    
+    // 3. Reset challenge status if you have a Challenge model
+    await Challenge.updateOne(
+      { isActive: true },
+      {
+        $set: {
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+          // Reset other challenge fields as needed
+        }
+      }
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: "Challenge has been reset successfully",
+    });
+  } catch (err) {
+    console.error("Error resetting challenge:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset challenge",
+      error: err.message,
+    });
+  }
+});
+
 
 module.exports = router;

@@ -13,7 +13,7 @@ router.get("/leaderboard", protect, async (req, res) => {
     const currentUserId = req.user._id.toString();
 
     // Get all users with basic info including totalPoints
-    const users = await User.find().select(
+    const users = await User.find({ isAdmin: false }).select(
       "_id fullName username profileImage bio createdAt totalPoints"
     );
 
@@ -215,7 +215,6 @@ async function getLeaderboardData() {
       "_id fullName username profileImage bio createdAt totalPoints"
     );
 
-    // Get project stats for all users in one aggregation query
     const projectStats = await Project.aggregate([
       { $match: { status: "submitted" } },
       {

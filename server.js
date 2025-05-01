@@ -22,6 +22,8 @@ app.use(express.urlencoded({ extended: true }));
 
 const passport = require("passport");
 require("./config/passport");
+const adminRoutes = require("./routes/adminRoutes");
+
 
 app.use(passport.initialize());
 // Add this to your server.js before routes
@@ -41,6 +43,8 @@ app.use("/api/challenge", challengeRoutes);
 app.use("/api/leaderboard", require("./routes/leaderboardRoutes"));
 // In server.js
 app.use("/api/ratings", require("./routes/ratingRoutes"));
+app.use("/api/admin", adminRoutes);
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {

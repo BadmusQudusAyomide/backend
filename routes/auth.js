@@ -11,7 +11,6 @@ const User = require("../models/User");
 const Project = require("../models/Project");
 const jwt = require("jsonwebtoken");
 
-// Utility: Generate JWT
 const generateToken = (user) => {
   return jwt.sign(
     {
@@ -168,7 +167,7 @@ router.get(
 // User management routes
 router.get("/users", protect, isAdmin, async (req, res) => {
   try {
-    const users = await User.find().select("-password");
+    const users = await User.find({ isAdmin: false }).select("-password");
     res.json(users);
   } catch (err) {
     console.error("Error fetching users:", err);
@@ -181,7 +180,7 @@ router.get("/users", protect, isAdmin, async (req, res) => {
 
 router.get("/users/count", protect, isAdmin, async (req, res) => {
   try {
-    const count = await User.countDocuments();
+    const count = await User.countDocuments({ isAdmin: false });
     res.status(200).json({ success: true, count });
   } catch (err) {
     console.error("Error counting users:", err);
@@ -199,7 +198,8 @@ router.get("/users/active", protect, isAdmin, async (req, res) => {
     watMidnight.setTime(watMidnight.getTime() - watOffset); // Convert back to UTC
 
     const count = await User.countDocuments({ 
-      lastActive: { $gte: watMidnight } 
+      lastActive: { $gte: watMidnight },
+       isAdmin: false 
     });
     
     res.status(200).json({ success: true, count });
@@ -322,9 +322,7 @@ router.get('/community/all-data', protect, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(4);
 
-    // 4. Get community posts (if you implement this later)
-    // const posts = await Post.find().populate('user')...
-
+ 
     res.json({
       success: true,
       data: {
@@ -344,7 +342,7 @@ router.get('/community/all-data', protect, async (req, res) => {
           thumbnail: project.imageUrl || `https://via.placeholder.com/150?text=${project.projectName.charAt(0)}`,
           description: project.description
         })),
-        // posts: [] // Add when you implement posts
+        // posts: [] 
       }
     });
   } catch (err) {
